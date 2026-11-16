@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "wealthlite",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "upload_source_maps": true,
+  "workers_dev": true,
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // The Worker runs first on every request so it can add headers (the demo app is never indexed).
+    "run_worker_first": true,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wealthlite-db",
+      "database_id": "76bc5aeb-a556-4972-86f3-90080d90e021",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+}
