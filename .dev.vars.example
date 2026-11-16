@@ -1,0 +1,2 @@
+# Local-only secrets. `npm run dev` creates .dev.vars with a random SESSION_SECRET if missing.
+SESSION_SECRET=change-me-local-only
