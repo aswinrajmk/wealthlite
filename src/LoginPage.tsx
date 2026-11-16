@@ -3,7 +3,7 @@ import { login, type User } from "./api";
 
 // DEMO: change this label (for example to "Log in"), push to main and watch the QA dashboard.
 // The flow tests self-heal through the test id; the copy test fails and reports a screenshot.
-const SIGN_IN_LABEL = "Sign in";
+const SIGN_IN_LABEL = "Log in";
 
 export function LoginPage({ onSignedIn }: { onSignedIn: (user: User) => void }) {
   const [error, setError] = useState<string | null>(null);
