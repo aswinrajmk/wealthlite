@@ -1,0 +1,150 @@
+name: Claude change (from Telegram)
+
+# Started by the portfolio Telegram bot after Aswin confirms a change request with YES.
+# Claude Code edits files only; the steps below run the checks, commit, push and open the PR.
+# The bot token has no "Workflows" permission, so a change can never alter CI files.
+on:
+  workflow_dispatch:
+    inputs:
+      instruction:
+        description: What to change (plain language)
+        required: true
+        type: string
+      request_id:
+        description: Bot request id
+        required: true
+        type: string
+
+concurrency:
+  group: claude-change
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  change:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      REQUEST_ID: ${{ inputs.request_id }}
+      INSTRUCTION: ${{ inputs.instruction }}
+      BOT_URL: https://portfolio.aswin-qa.workers.dev
+    steps:
+      - name: Validate the request id
+        run: printf '%s' "$REQUEST_ID" | grep -Eq '^[a-f0-9]{12}$' || { echo "Invalid request id"; exit 1; }
+
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.BOT_GITHUB_TOKEN }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: git switch -c "bot/$REQUEST_ID"
+
+      - name: Make the change with Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.BOT_GITHUB_TOKEN }}
+          claude_args: >-
+            --model claude-opus-5
+            --max-turns 30
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run lint),Bash(npm run typecheck),Bash(npm run build),Bash(npm run format)"
+            --disallowedTools "WebSearch,WebFetch"
+          prompt: |
+            You are making one change in the wealthlite repository, requested by the owner from Telegram.
+
+            Request:
+            ${{ inputs.instruction }}
+
+            How to work:
+            - Read README.md (and CLAUDE.md if present) first and follow the repository's rules: synthetic data only,
+              never add secrets, keep the existing style, and keep the change as small as the request allows.
+            - Do not edit anything under .github/, wrangler configuration, or existing migrations.
+            - Do not commit, push, create branches or open pull requests. The workflow does that after you finish.
+            - Run `npm run lint`, `npm run typecheck` and `npm run build` and fix anything you broke. Run `npm run format` before finishing.
+            - When done, write a short plain-language summary (2 to 4 sentences: what changed and why) to
+              `.bot-summary.md` in the repository root. If the request is unclear or unsafe, make no code changes
+              and explain why in `.bot-summary.md`.
+
+      - name: Check the result
+        id: result
+        run: |
+          summary=$(cat .bot-summary.md 2>/dev/null || echo "No summary was written.")
+          rm -f .bot-summary.md
+          printf '%s' "$summary" > "$RUNNER_TEMP/summary.txt"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "status=no_changes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git status --porcelain | grep -E ' \.github/' ; then
+            echo "The change touched .github/, which bot changes may not do." >> "$RUNNER_TEMP/summary.txt"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "status=changed" >> "$GITHUB_OUTPUT"
+
+      - name: Run the checks
+        if: steps.result.outputs.status == 'changed'
+        run: npm run lint && npm run typecheck && npm run build
+
+      - name: Commit, push and open the pull request
+        id: pr
+        if: steps.result.outputs.status == 'changed'
+        env:
+          GH_TOKEN: ${{ secrets.BOT_GITHUB_TOKEN }}
+        run: |
+          title="Bot: $(printf '%s' "$INSTRUCTION" | head -n 1 | cut -c1-60)"
+          git config user.name "aswin-qa-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "$title" -m "Requested from Telegram (request $REQUEST_ID)."
+          git push -q -u origin "bot/$REQUEST_ID"
+          {
+            echo "Requested from Telegram (request \`$REQUEST_ID\`)."
+            echo
+            echo "**Request**"
+            echo
+            printf '%s\n' "$INSTRUCTION"
+            echo
+            echo "**What changed**"
+            echo
+            cat "$RUNNER_TEMP/summary.txt"
+            echo
+            echo
+            echo "Made by Claude Code in GitHub Actions. Merging needs the owner's YES in Telegram after checks pass."
+          } > "$RUNNER_TEMP/body.md"
+          url=$(gh pr create --base main --head "bot/$REQUEST_ID" --title "$title" --body-file "$RUNNER_TEMP/body.md")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Report back to the bot
+        if: always()
+        env:
+          BOT_EVENTS_TOKEN: ${{ secrets.BOT_EVENTS_TOKEN }}
+          RESULT: ${{ steps.result.outputs.status }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$BOT_EVENTS_TOKEN" ] || { echo "::warning::BOT_EVENTS_TOKEN not set"; exit 0; }
+          node -e '
+            const fs = require("fs");
+            const e = process.env;
+            let summary = "";
+            try { summary = fs.readFileSync(e.RUNNER_TEMP + "/summary.txt", "utf8"); } catch {}
+            let status = "failed";
+            if (e.JOB_STATUS === "success" && e.PR_URL) status = "pr_opened";
+            else if (e.JOB_STATUS === "success" && e.RESULT === "no_changes") status = "no_changes";
+            const body = { request_id: e.REQUEST_ID, status, summary: summary.slice(0, 1500), run_url: e.RUN_URL };
+            if (status === "pr_opened") Object.assign(body, { pr_url: e.PR_URL, pr_number: Number(e.PR_NUMBER) });
+            fs.writeFileSync("event.json", JSON.stringify(body));
+          '
+          curl -fsS -X POST "$BOT_URL/api/bot/events" \
+            -H "Authorization: Bearer $BOT_EVENTS_TOKEN" -H "Content-Type: application/json" \
+            --data @event.json || echo "::warning::Could not reach the bot"
