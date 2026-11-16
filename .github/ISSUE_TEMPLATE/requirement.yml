@@ -1,0 +1,25 @@
+name: Requirement
+description: A product requirement with acceptance criteria. Tests are drafted for it in qa-tests.
+title: "<short behaviour>"
+labels: [requirement]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      placeholder: As an advisor, I want … so that …
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: One Given/When/Then per line. Each one becomes at least one test tagged @REQ-<issue number>.
+      placeholder: |
+        - Given … when … then …
+        - Given … when … then …
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: Synthetic demo data only. Never include real client or employer information.
