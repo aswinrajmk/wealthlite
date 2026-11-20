@@ -1,0 +1,910 @@
+{
+  "name": "Jira Story Intake",
+  "nodes": [
+    {
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search new stories",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "url": "https://aswinnrk.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = KAN AND issuetype = Story AND (labels IS EMPTY OR labels NOT IN (ai-new, ai-analysing, ai-analysis-approved, ai-tests-approved, ai-done, ai-rejected)) ORDER BY created ASC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,description,issuetype,labels"
+            },
+            {
+              "name": "maxResults",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Flatten stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// Turn Jira's search response into one item per story, with the ADF description as plain text.\nfunction adfText(node) {\n  if (!node) return '';\n  if (node.type === 'text') return node.text || '';\n  if (node.type === 'hardBreak') return '\\n';\n  const inner = (node.content || []).map(adfText).join('');\n  if (node.type === 'listItem') return '- ' + inner;\n  if (['paragraph', 'heading', 'codeBlock', 'blockquote'].includes(node.type)) return inner + '\\n';\n  return inner;\n}\nconst site = 'https://aswinnrk.atlassian.net';\nconst out = [];\nfor (const item of $input.all()) {\n  for (const issue of item.json.issues || []) {\n    out.push({ json: {\n      key: issue.key,\n      summary: issue.fields.summary,\n      description: adfText(issue.fields.description).trim() || '(no description)',\n      url: `${site}/browse/${issue.key}`,\n    }});\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "name": "Claim story (label ai-new)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\":{\"labels\":[{\"add\":\"ai-new\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Qwen analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'qwen3.5:2b',\n  stream: false,\n  think: false,\n  options: { temperature: 0.2 },\n  format: {\n    type: 'object',\n    properties: {\n      summary: { type: 'string' },\n      ambiguities: { type: 'array', items: { type: 'string' } },\n      risks: { type: 'array', items: { type: 'string' } }\n    },\n    required: ['summary', 'ambiguities', 'risks']\n  },\n  messages: [\n    { role: 'system', content: 'You are a senior QA analyst. Analyse the user story and its acceptance criteria. Reply only with JSON: a one-sentence summary, ambiguities (missing or unclear details), and risks.' },\n    { role: 'user', content: 'Story ' + $('Flatten stories').item.json.key + ': ' + $('Flatten stories').item.json.summary + '\\n\\n' + $('Flatten stories').item.json.description }\n  ]\n}) }}",
+        "options": {
+          "timeout": 180000
+        }
+      }
+    },
+    {
+      "name": "Format message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// Parse Qwen's JSON and build the Telegram message for this story.\nconst story = $('Flatten stories').item.json;\nlet a;\ntry { a = JSON.parse($json.message.content); }\ncatch (e) { a = { summary: '(could not parse model output)', ambiguities: [], risks: [] }; }\nconst list = (xs) => (xs && xs.length ? xs.map((x) => '\u2022 ' + x).join('\\n') : '\u2022 none');\nconst text = [\n  `\ud83c\udd95 New story ${story.key}: ${story.summary}`,\n  story.url,\n  '',\n  `Summary: ${a.summary}`,\n  '',\n  'Ambiguities:', list(a.ambiguities),\n  '',\n  'Risks:', list(a.risks),\n].join('\\n').slice(0, 3800);\nreturn { json: { ...story, analysis: a, text } };\n"
+      }
+    },
+    {
+      "name": "Ask analysis approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "={{ $json.text }}\n\nApprove this analysis? (buttons work from Telegram on this Mac)",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "\u2705 Approve",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=approve&s=analysis')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  },
+                  {
+                    "text": "\u274c Reject",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=reject&s=analysis')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Wait for analysis decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 24,
+        "resumeUnit": "hours",
+        "options": {}
+      }
+    },
+    {
+      "name": "Analysis approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.query ? $json.query.d : 'timeout' }}",
+              "operation": "equal",
+              "value2": "approve"
+            },
+            {
+              "value1": "={{ $json.query ? $json.query.s : '' }}",
+              "operation": "equal",
+              "value2": "analysis"
+            }
+          ]
+        },
+        "combineOperation": "all"
+      }
+    },
+    {
+      "name": "Comment analysis on story",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        -160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}/comment",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: \"\\ud83e\\udd16 AI requirement analysis (approved)\", marks: [{ type: 'strong' }] }] }, ...String($('Format message').first().json.text).split('\\n').filter(l => l.trim()).map(l => ({ type: 'paragraph', content: [{ type: 'text', text: l }] }))] } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Label analysis approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -160
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"ai-new\"}, {\"add\": \"ai-analysis-approved\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Confirm approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        -160
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\u2705 {{ $('Format message').first().json.key }} analysis approved and posted to Jira. Drafting test cases\u2026",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Qwen test cases",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        -160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'qwen3.5:2b',\n  stream: false,\n  think: false,\n  options: { temperature: 0.2 },\n  format: {\n    type: 'object',\n    properties: {\n      cases: {\n        type: 'array',\n        items: {\n          type: 'object',\n          properties: {\n            title: { type: 'string' },\n            type: { type: 'string', enum: ['positive', 'negative', 'edge'] },\n            criterion: { type: 'string' },\n            preconditions: { type: 'string' },\n            steps: { type: 'array', items: { type: 'string' } },\n            expected: { type: 'string' }\n          },\n          required: ['title', 'type', 'criterion', 'preconditions', 'steps', 'expected']\n        }\n      }\n    },\n    required: ['cases']\n  },\n  messages: [\n    { role: 'system', content: 'You are a senior QA engineer. Write the MINIMAL set of manual test cases that gives core coverage of the story: exactly one positive case per acceptance criterion, plus at most two negative or edge cases that matter most. 3 to 6 cases in total. No duplicates. Each case: short title, type, the acceptance criterion it covers, preconditions, 2-5 concrete steps, one observable expected result. Use exact UI text from the story. Reply only with JSON.' },\n    { role: 'user', content: 'Story ' + $('Format message').first().json.key + ': ' + $('Format message').first().json.summary + '\\n\\n' + $('Format message').first().json.description + '\\n\\nApproved analysis:\\n' + JSON.stringify($('Format message').first().json.analysis) }\n  ]\n}) }}",
+        "options": {
+          "timeout": 300000
+        }
+      }
+    },
+    {
+      "name": "Format test cases",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        -160
+      ],
+      "parameters": {
+        "jsCode": "\n// Parse Qwen's test cases and build the approval message.\nconst story = $('Format message').first().json;\nlet cases = [];\ntry { cases = JSON.parse($json.message.content).cases || []; } catch (e) { cases = []; }\ncases = cases.slice(0, 6);\nconst icon = { positive: '\u2705', negative: '\u26d4', edge: '\u26a0\ufe0f' };\nconst blocks = cases.map((c, i) => [\n  `${i + 1}. ${icon[c.type] || '\u2022'} ${c.title} (${c.type})`,\n  `   Covers: ${c.criterion}`,\n  `   Pre: ${c.preconditions}`,\n  ...(c.steps || []).map((s, j) => `   ${j + 1}) ${s}`),\n  `   Expect: ${c.expected}`,\n].join('\\n'));\nconst text = (cases.length\n  ? [`\ud83e\uddea Test cases for ${story.key}: ${story.summary}`, '', ...blocks].join('\\n\\n')\n  : `\u26a0\ufe0f Qwen returned no usable test cases for ${story.key}. Reject, then remove the ai-rejected label to retry.`\n).slice(0, 3800);\nreturn [{ json: { cases, text } }];\n"
+      }
+    },
+    {
+      "name": "Ask tests approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3080,
+        -160
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "={{ $json.text }}\n\nCreate these as Jira Test issues?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "\u2705 Approve",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=approve&s=tests')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  },
+                  {
+                    "text": "\u274c Reject",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=reject&s=tests')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Wait for tests decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3300,
+        -160
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 24,
+        "resumeUnit": "hours",
+        "options": {}
+      }
+    },
+    {
+      "name": "Tests approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        -160
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.query ? $json.query.d : 'timeout' }}",
+              "operation": "equal",
+              "value2": "approve"
+            },
+            {
+              "value1": "={{ $json.query ? $json.query.s : '' }}",
+              "operation": "equal",
+              "value2": "tests"
+            }
+          ]
+        },
+        "combineOperation": "all"
+      }
+    },
+    {
+      "name": "Prepare test issues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        -320
+      ],
+      "parameters": {
+        "jsCode": "\n// One Jira 'Test' issue per approved case, linked to the story with 'Tests' (story is tested by test).\nconst story = $('Format message').first().json;\nconst cases = $('Format test cases').first().json.cases;\nconst p = (t) => ({ type: 'paragraph', content: [{ type: 'text', text: String(t || '-') }] });\nconst h = (t) => ({ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: t }] });\nreturn cases.map((c) => ({ json: { title: c.title, payload: {\n  fields: {\n    project: { key: 'KAN' },\n    issuetype: { id: '10010' },\n    summary: `[${story.key}] ${c.title}`.slice(0, 250),\n    labels: ['ai-generated', `tc-${c.type}`],\n    description: { type: 'doc', version: 1, content: [\n      p(`Type: ${c.type} | Covers: ${c.criterion}`),\n      h('Preconditions'), p(c.preconditions),\n      h('Steps'),\n      { type: 'orderedList', content: (c.steps || []).map((s) => ({ type: 'listItem', content: [p(s)] })) },\n      h('Expected result'), p(c.expected),\n    ] },\n  },\n  update: { issuelinks: [{ add: { type: { name: 'Tests' }, outwardIssue: { key: story.key } } }] },\n} } }));\n"
+      }
+    },
+    {
+      "name": "Create Test issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        -320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://aswinnrk.atlassian.net/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Summarize created",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        -320
+      ],
+      "parameters": {
+        "jsCode": "\nconst story = $('Format message').first().json;\nconst site = story.url.split('/browse/')[0];\nconst keys = $input.all().map((i) => i.json.key);\nconst titles = $('Prepare test issues').all().map((i) => i.json.title);\nconst lines = keys.map((k, i) => `\u2022 ${k} ${titles[i] || ''}\\n  ${site}/browse/${k}`);\nreturn [{ json: { keys, text: [`\ud83c\udf89 Created ${keys.length} Test issues for ${story.key}:`, ...lines].join('\\n') } }];\n"
+      }
+    },
+    {
+      "name": "Label done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        -320
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"ai-analysis-approved\"}, {\"add\": \"ai-done\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Confirm tests created",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4620,
+        -320
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "={{ $('Summarize created').first().json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Label tests rejected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"ai-analysis-approved\"}, {\"add\": \"ai-rejected\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Confirm tests rejected",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\u274c {{ $('Format message').first().json.key }} test cases rejected; nothing was created. Remove the ai-rejected label to start over.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Comment rejection on story",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}/comment",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: \"\\ud83e\\udd16 AI analysis rejected (or no answer within 24h)\", marks: [{ type: 'strong' }] }] }, ...String('Update the story, then remove the ai-rejected label to run the analysis again.').split('\\n').filter(l => l.trim()).map(l => ({ type: 'paragraph', content: [{ type: 'text', text: l }] }))] } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Label rejected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        160
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $('Format message').first().json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"ai-new\"}, {\"add\": \"ai-rejected\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Confirm rejection",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        160
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\u274c {{ $('Format message').first().json.key }} analysis rejected. Edit the story and remove the ai-rejected label to re-run.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Search new stories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search new stories": {
+      "main": [
+        [
+          {
+            "node": "Flatten stories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flatten stories": {
+      "main": [
+        [
+          {
+            "node": "Claim story (label ai-new)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim story (label ai-new)": {
+      "main": [
+        [
+          {
+            "node": "Qwen analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen analysis": {
+      "main": [
+        [
+          {
+            "node": "Format message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format message": {
+      "main": [
+        [
+          {
+            "node": "Ask analysis approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask analysis approval": {
+      "main": [
+        [
+          {
+            "node": "Wait for analysis decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for analysis decision": {
+      "main": [
+        [
+          {
+            "node": "Analysis approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analysis approved?": {
+      "main": [
+        [
+          {
+            "node": "Comment analysis on story",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Comment rejection on story",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comment analysis on story": {
+      "main": [
+        [
+          {
+            "node": "Label analysis approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label analysis approved": {
+      "main": [
+        [
+          {
+            "node": "Confirm approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm approval": {
+      "main": [
+        [
+          {
+            "node": "Qwen test cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qwen test cases": {
+      "main": [
+        [
+          {
+            "node": "Format test cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format test cases": {
+      "main": [
+        [
+          {
+            "node": "Ask tests approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask tests approval": {
+      "main": [
+        [
+          {
+            "node": "Wait for tests decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for tests decision": {
+      "main": [
+        [
+          {
+            "node": "Tests approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tests approved?": {
+      "main": [
+        [
+          {
+            "node": "Prepare test issues",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label tests rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare test issues": {
+      "main": [
+        [
+          {
+            "node": "Create Test issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Test issue": {
+      "main": [
+        [
+          {
+            "node": "Summarize created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize created": {
+      "main": [
+        [
+          {
+            "node": "Label done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label done": {
+      "main": [
+        [
+          {
+            "node": "Confirm tests created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label tests rejected": {
+      "main": [
+        [
+          {
+            "node": "Confirm tests rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comment rejection on story": {
+      "main": [
+        [
+          {
+            "node": "Label rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label rejected": {
+      "main": [
+        [
+          {
+            "node": "Confirm rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
