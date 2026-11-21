@@ -36,6 +36,10 @@ When a pull request changes the intake prompt (`automation/prompts/intake.json`)
 3. Each draft is scored, and the results table appears in the run summary.
 4. The job **fails if the average drops more than 5 points** below `baseline.json`.
 
+In CI, the 20 stories run as **4 parallel jobs** of 5 stories each, one CPU runner per job. A `gate` job then
+combines them, writes the table, applies the 5-point gate and records the result. It fails if any story is
+missing, so a lost shard can't make it pass.
+
 The prompt text lives only in `automation/prompts/intake.json`, so production and the eval can't drift apart.
 
 ```sh

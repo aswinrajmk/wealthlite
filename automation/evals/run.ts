@@ -6,9 +6,14 @@
 //   node automation/evals/run.ts --update-baseline    run and save the result as the new baseline
 //   EVAL_MODEL=qwen2.5-coder:7b node automation/evals/run.ts --no-gate   compare another model, without gating
 //
+// In CI the golden set runs as 4 parallel jobs, then one job combines them and gates:
+//   node automation/evals/run.ts --shard=2/4 --out=shard-2.json   evaluate stories 2, 6, 10, … and save them
+//   node automation/evals/run.ts --combine=shards/                 load every shard file, then report and gate
+//
 // Env: OLLAMA_URL (default http://127.0.0.1:11434), EVAL_MODEL, EVAL_ONLY=G-01,G-02, REPORT (markdown output path).
 
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { scoreTestCases, type Score, type Story, type TestCase } from "./score.ts";
 
 interface Prompts {
@@ -40,7 +45,12 @@ const SEED = 42; // fixed sampling seed so reruns on the same machine are compar
 const here = new URL("./", import.meta.url);
 const prompts = JSON.parse(readFileSync(new URL("../prompts/intake.json", here), "utf8")) as Prompts;
 const baselineUrl = new URL("baseline.json", here);
-const args = new Set(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const args = new Set(argv);
+const option = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const shard = option("shard"); // "2/4"
+const out = option("out");
+const combine = option("combine");
 const ollama = (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
 const model = process.env.EVAL_MODEL || prompts.model;
 const only = new Set((process.env.EVAL_ONLY ?? "").split(",").filter(Boolean));
@@ -50,6 +60,13 @@ const golden = readdirSync(new URL("golden/", here))
   .sort()
   .map((f) => JSON.parse(readFileSync(new URL(`golden/${f}`, here), "utf8")) as Golden)
   .filter((g) => !only.size || only.has(g.key));
+
+function inShard(index: number): boolean {
+  if (!shard) return true;
+  const [i, n] = shard.split("/").map(Number);
+  if (!i || !n || i < 1 || i > n) throw new Error(`--shard must look like 2/4, got "${shard}"`);
+  return index % n === i - 1;
+}
 
 /** One chat call with JSON-schema output, exactly as the n8n workflow sends it (plus a fixed seed). */
 async function chat(system: string, schema: unknown, user: string): Promise<unknown> {
@@ -93,12 +110,37 @@ async function evaluate(story: Golden): Promise<StoryResult> {
 }
 
 const results: StoryResult[] = [];
-for (const story of golden) {
-  const r = await evaluate(story);
-  results.push(r);
-  console.log(
-    `${r.key.padEnd(5)} ${String(r.score).padStart(3)}%  ${(r.ms / 1000).toFixed(0).padStart(4)} s  ${r.error ?? r.summary}`,
-  );
+if (combine) {
+  // Combine the shard files from the parallel jobs. Every golden story must be there exactly once: a lost or
+  // failed shard must never make the gate pass on a partial set.
+  for (const f of readdirSync(combine).filter((name) => name.endsWith(".json"))) {
+    results.push(...(JSON.parse(readFileSync(join(combine, f), "utf8")) as StoryResult[]));
+  }
+  results.sort((a, b) => a.key.localeCompare(b.key));
+  const want = golden.map((g) => g.key);
+  const got = results.map((r) => r.key);
+  const missing = want.filter((k) => !got.includes(k));
+  if (missing.length || got.length !== new Set(got).size) {
+    console.error(`FAIL: the shards do not cover the golden set once each. Missing: ${missing.join(", ") || "none"}.`);
+    process.exit(1);
+  }
+} else {
+  for (const [index, story] of golden.entries()) {
+    if (!inShard(index)) continue;
+    const r = await evaluate(story);
+    results.push(r);
+    console.log(
+      `${r.key.padEnd(5)} ${String(r.score).padStart(3)}%  ${(r.ms / 1000).toFixed(0).padStart(4)} s  ${r.error ?? r.summary}`,
+    );
+  }
+}
+
+if (out) {
+  // A shard only saves its results. Reporting, recording and the gate happen once, in the combine step.
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, JSON.stringify(results, null, 2) + "\n");
+  console.log(`Saved ${results.length} results to ${out}.`);
+  process.exit(0);
 }
 const mean = Math.round((results.reduce((sum, r) => sum + r.score, 0) / Math.max(results.length, 1)) * 10) / 10;
 
