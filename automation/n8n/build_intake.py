@@ -14,9 +14,9 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 API_KEY = os.environ["N8N_API_KEY"]
 JIRA_CRED = {"id": "VD72DSMts0FXFVUi", "name": "Jira WealthLite"}
 TG_CRED = {"id": "mrivhYzNiVsgPznQ", "name": "Telegram aswinqabot"}
-# Header auth "Bearer <AI_EVALS_TOKEN>" for the portfolio's POST /api/ai-evals. Empty id = not set up yet, and the
-# "Record draft score" node is left out, so the workflow works the same without it.
-EVALS_CRED = {"id": "", "name": "Portfolio AI evals"}
+# Header auth "Bearer <AI_EVALS_TOKEN>" for the portfolio's POST /api/ai-evals. With an empty id the "Record draft
+# score" node is left out, and the workflow works the same without it.
+EVALS_CRED = {"id": "ItO9HVMIcg2bDMOI", "name": "Portfolio AI evals"}
 REPO_OUT = sys.argv[1]
 
 STATE_LABELS = "ai-new, ai-analysing, ai-analysis-approved, ai-tests-approved, ai-done, ai-rejected"
