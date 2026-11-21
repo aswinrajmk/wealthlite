@@ -56,10 +56,20 @@ def ollama_body(step, user_expr):
     """n8n expression for an Ollama chat request built from automation/prompts/intake.json, so the workflow and
     the evals (automation/evals/run.ts) always use the same prompt, schema, model and options."""
     p = PROMPTS[step]
-    return ("={{ JSON.stringify({ model: " + json.dumps(PROMPTS["model"]) + ", stream: false, think: false, "
-            "options: " + json.dumps(PROMPTS["options"]) + ", format: " + json.dumps(p["schema"]) + ", "
-            "messages: [{ role: 'system', content: " + json.dumps(p["system"]) + " }, "
-            "{ role: 'user', content: " + user_expr + " }] }) }}")
+    # n8n ends an expression at the first "}}", so JSON inside it must never close two braces in a row: the
+    # schema is dumped with indentation, which puts each closing brace on its own line.
+    body = ("JSON.stringify({ model: " + json.dumps(PROMPTS["model"]) + ", stream: false, think: false, "
+            "options: " + json.dumps(PROMPTS["options"], indent=1) + ", format: " + json.dumps(p["schema"], indent=1)
+            + ", messages: [{ role: 'system', content: " + json.dumps(p["system"]) + " }, "
+            "{ role: 'user', content: " + user_expr + " }] })")
+    return "={{ " + no_double_braces(body) + " }}"
+
+
+def no_double_braces(expr):
+    """Refuse to build an n8n expression that n8n would cut short at an inner "}}" (or open early at "{{")."""
+    if "}}" in expr or "{{" in expr:
+        raise ValueError("n8n expression contains '}}' or '{{', which n8n reads as the end of the expression")
+    return expr
 
 
 OLLAMA_BODY = ollama_body(
