@@ -18,8 +18,8 @@ SITE = "https://" + os.environ.get("JIRA_SITE", "<JIRA_SITE>").removeprefix("htt
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "<TELEGRAM_CHAT_ID>")
 JIRA_CRED = {"id": "VD72DSMts0FXFVUi", "name": "Jira WealthLite"}
 TG_CRED = {"id": "mrivhYzNiVsgPznQ", "name": "Telegram aswinqabot"}
-GITHUB_CRED = {"id": "", "name": "GitHub qa-tests dispatch"}  # filled in after the first --push
-WF_ID = ""  # filled in after the first --push
+GITHUB_CRED = {"id": "3JhDdYxTwbKPvsB2", "name": "GitHub qa-tests dispatch"}
+WF_ID = "Pndy05uJMPxEXlQ9"
 REPO_OUT = sys.argv[1]
 PUSH = "--push" in sys.argv
 
@@ -188,7 +188,9 @@ def call(method, path, body=None):
 if PUSH:
     if not GITHUB_CRED["id"]:
         cred = call("POST", "/credentials", {"name": GITHUB_CRED["name"], "type": "httpHeaderAuth", "data": {
-            "name": "Authorization", "value": "Bearer " + os.environ["QA_DISPATCH_TOKEN"]}})
+            "name": "Authorization", "value": "Bearer " + os.environ["QA_DISPATCH_TOKEN"],
+            # The token can only be sent to GitHub's API, whatever a node is edited to call.
+            "allowedHttpRequestDomains": "domains", "allowedDomains": "api.github.com"}})
         GITHUB_CRED["id"] = cred["id"]
         print("created credential:", cred["id"], "(put it in GITHUB_CRED)")
     if WF_ID:
