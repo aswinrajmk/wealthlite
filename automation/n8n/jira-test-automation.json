@@ -1,0 +1,576 @@
+{
+  "name": "Jira Test Automation",
+  "nodes": [
+    {
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search labelled tests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "url": "https://aswinnrk.atlassian.net/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "project = KAN AND issuetype = Test AND labels in (smoke, regression) AND labels not in (auto-pending, auto-queued, auto-pr-open, automated, auto-failed, auto-rejected) ORDER BY created ASC"
+            },
+            {
+              "name": "fields",
+              "value": "summary,labels,issuelinks"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "Group by story",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// Group the labelled Test issues by their story (Test --Tests--> Story) and take the oldest story only:\n// one story per execution, because each run pauses on its own approval link.\nconst byStory = new Map();\nfor (const issue of $input.first().json.issues || []) {\n  const link = (issue.fields.issuelinks || []).find((l) => l.type.name === 'Tests' && l.outwardIssue);\n  if (!link) continue; // a Test with no story cannot be traced, so it is skipped\n  const story = link.outwardIssue;\n  const entry = byStory.get(story.key) || { story: story.key, title: story.fields.summary, tests: [] };\n  const suite = issue.fields.labels.includes('smoke') ? 'smoke' : 'regression';\n  entry.tests.push({ key: issue.key, suite, title: issue.fields.summary.replace(/^\\[KAN-\\d+\\]\\s*/, '') });\n  byStory.set(story.key, entry);\n}\nconst first = [...byStory.values()][0];\nif (!first) return [];\nconst lines = first.tests.map((t) => `\u2022 ${t.key} (${t.suite}) ${t.title}`);\nconst text = [`\ud83e\udd16 Automate ${first.tests.length} test(s) for ${first.story}: ${first.title}`, '', ...lines,\n  '', `${\"https://aswinnrk.atlassian.net\"}/browse/${first.story}`].join('\\n').slice(0, 3800);\nreturn [{ json: { ...first, keys: first.tests.map((t) => t.key).join(','), text } }];\n"
+      }
+    },
+    {
+      "name": "Split tests (claim)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
+      }
+    },
+    {
+      "name": "Label auto-pending",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"add\": \"auto-pending\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "One per story (ask)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
+      }
+    },
+    {
+      "name": "Ask automation approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "={{ $json.text }}\n\nWrite Playwright tests for these in qa-tests?",
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "\u2705 Automate",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=approve&s=automate')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  },
+                  {
+                    "text": "\u274c Not now",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=reject&s=automate')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Wait for decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 24,
+        "resumeUnit": "hours",
+        "options": {}
+      }
+    },
+    {
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.query ? $json.query.d : 'timeout' }}",
+              "operation": "equal",
+              "value2": "approve"
+            },
+            {
+              "value1": "={{ $json.query ? $json.query.s : '' }}",
+              "operation": "equal",
+              "value2": "automate"
+            }
+          ]
+        },
+        "combineOperation": "all"
+      }
+    },
+    {
+      "name": "Split tests (queue)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -160
+      ],
+      "parameters": {
+        "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
+      }
+    },
+    {
+      "name": "Label auto-queued",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -160
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"auto-pending\"}, {\"add\": \"auto-queued\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "One per story (dispatch)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -160
+      ],
+      "parameters": {
+        "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
+      }
+    },
+    {
+      "name": "Dispatch to qa-tests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        -160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/aswinrajmk/qa-tests/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_type: 'jira-tests-labelled', client_payload: { story: $json.story } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<set-in-n8n>",
+          "name": "GitHub qa-tests dispatch"
+        }
+      }
+    },
+    {
+      "name": "Confirm dispatched",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        -160
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\ud83d\ude80 {{ $('Group by story').first().json.story }}: qa-tests is writing the tests ({{ $('Group by story').first().json.keys }}). You'll get the PR here.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Split tests (reject)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        160
+      ],
+      "parameters": {
+        "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
+      }
+    },
+    {
+      "name": "Label auto-rejected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        160
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"auto-pending\"}, {\"add\": \"auto-rejected\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "One per story (reject)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        160
+      ],
+      "parameters": {
+        "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
+      }
+    },
+    {
+      "name": "Confirm not automated",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        160
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\u23f8 {{ $json.story }}: not automated. Remove auto-rejected from a Test issue to ask again.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Search labelled tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search labelled tests": {
+      "main": [
+        [
+          {
+            "node": "Group by story",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group by story": {
+      "main": [
+        [
+          {
+            "node": "Split tests (claim)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split tests (claim)": {
+      "main": [
+        [
+          {
+            "node": "Label auto-pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label auto-pending": {
+      "main": [
+        [
+          {
+            "node": "One per story (ask)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One per story (ask)": {
+      "main": [
+        [
+          {
+            "node": "Ask automation approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask automation approval": {
+      "main": [
+        [
+          {
+            "node": "Wait for decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for decision": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Split tests (queue)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split tests (reject)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split tests (queue)": {
+      "main": [
+        [
+          {
+            "node": "Label auto-queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label auto-queued": {
+      "main": [
+        [
+          {
+            "node": "One per story (dispatch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One per story (dispatch)": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to qa-tests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to qa-tests": {
+      "main": [
+        [
+          {
+            "node": "Confirm dispatched",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split tests (reject)": {
+      "main": [
+        [
+          {
+            "node": "Label auto-rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label auto-rejected": {
+      "main": [
+        [
+          {
+            "node": "One per story (reject)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One per story (reject)": {
+      "main": [
+        [
+          {
+            "node": "Confirm not automated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
