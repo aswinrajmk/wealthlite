@@ -42,8 +42,10 @@ Not every manual test case is worth automating. Pick the ones that are by adding
 
 ```
 Every minute → Test issues labelled smoke/regression, no auto-* label → group by story (oldest story first)
-  → label auto-pending → Telegram ✅ Automate / ❌ Not now
-  → ✅ label auto-queued → repository_dispatch "jira-tests-labelled" {story} to qa-tests → Telegram
+  → label auto-pending → Telegram ✅ Claude / 🏠 Local / ❌ Not now
+  → ✅ label auto-queued → dispatch {story, engine: claude} → qa-tests runs Claude Code
+  → 🏠 label auto-queued → read framework files from GitHub → build the spec skeleton (titles, tags, steps)
+       → qwen3.5:2b fills in the steps on this Mac → dispatch {story, engine: local, spec} → qa-tests checks it
   → ❌ or no answer in 24h → label auto-rejected
 ```
 
@@ -58,7 +60,14 @@ qa-tests then writes the specs (`automate-from-jira.yml`), opens PR `auto/<story
 | `auto-failed`   | The qa-tests run failed. Remove the label to retry                       |
 | `auto-rejected` | You said not now, or didn't answer in 24h. Remove the label to ask again |
 
-All of a story's labelled tests go into one spec and one PR. Labelling another test of the same story later
+All of a story's labelled tests go into one spec and one PR.
+
+**Claude or local?** Use ✅ Claude when your Claude subscription token works: it reads the repo, runs the
+tests and fixes its own mistakes. Use 🏠 Local when it doesn't. n8n writes the skeleton itself (describe,
+titles, exact tags, one `test.step` per Jira step), so the 2B model only fills in the bodies. qa-tests removes
+unused fixtures and runs the same checks. If anything fails, the PR opens as a **draft** for you to finish.
+If Ollama is down or replies with no code, the skeleton itself is sent, so you still get a draft with the
+structure right. Change `LOCAL_MODEL` in `build_automation.py` to try a bigger model. Labelling another test of the same story later
 updates the open PR, or opens a new one.
 
 Setup: add `QA_DISPATCH_TOKEN` to `~/.config/wealthlite/jira.env`. It is the same kind of fine-grained PAT as
