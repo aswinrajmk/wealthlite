@@ -130,6 +130,33 @@ const report = lines.join("\n") + "\n";
 if (process.env.REPORT) writeFileSync(process.env.REPORT, report);
 console.log(`\nAverage ${mean}% over ${results.length} stories (model ${model}, prompt ${prompts.version}).`);
 
+// --record: send the result to the portfolio's AI quality section (only full runs, only when the token is set).
+if (args.has("--record") && !only.size) {
+  const token = process.env.AI_EVALS_TOKEN;
+  const url = process.env.AI_EVALS_URL ?? "https://portfolio.aswin-qa.workers.dev/api/ai-evals";
+  if (!token) {
+    console.warn("AI_EVALS_TOKEN is not set, so the result was not recorded.");
+  } else {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "golden",
+        model,
+        promptVersion: prompts.version,
+        score: mean,
+        details: { perStory: Object.fromEntries(results.map((r) => [r.key, r.score])) },
+        runUrl: process.env.CI_RUN_URL || undefined,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    }).catch((err: unknown) => err);
+    // Recording is a report, never a gate: a failure here only warns.
+    if (response instanceof Response && response.ok) console.log("Recorded on the QA dashboard.");
+    else
+      console.warn(`Could not record the result: ${response instanceof Response ? response.status : String(response)}`);
+  }
+}
+
 if (args.has("--update-baseline")) {
   const next: Baseline = {
     model,
