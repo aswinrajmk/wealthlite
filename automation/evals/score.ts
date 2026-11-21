@@ -32,6 +32,8 @@ export interface Score {
   contradictions: { case: number; reason: string }[];
   incomplete: { case: number; reason: string }[];
   sizeOk: boolean;
+  /** Set when the story itself is the problem (no acceptance criteria); the score then excludes coverage. */
+  storyIssue: string | null;
   /** One line for Telegram, e.g. "Score 82% · 3/3 criteria · 0 duplicates · ⚠ contradiction in case 2". */
   summary: string;
 }
@@ -169,17 +171,23 @@ export function scoreTestCases(story: Story, cases: TestCase[]): Score {
   });
 
   const sizeOk = cases.length >= 3 && cases.length <= 6;
-  const points =
-    WEIGHTS.coverage * coverage +
+  // A story without acceptance criteria is a requirement problem, not a model problem: coverage cannot be judged,
+  // so it is left out and the other checks are scaled to 100. The story issue is reported first.
+  const storyIssue = criteria.length ? null : "Story has no acceptance criteria: fix the story first";
+  const otherPoints =
     WEIGHTS.duplicates * (1 - Math.min(duplicates.length / Math.max(cases.length - 1, 1), 1)) +
     WEIGHTS.consistency * (cases.length ? 1 - new Set(contradictions.map((c) => c.case)).size / cases.length : 0) +
     WEIGHTS.completeness * (cases.length ? 1 - incomplete.length / cases.length : 0) +
     WEIGHTS.size * (sizeOk ? 1 : 0);
+  const points = storyIssue
+    ? (otherPoints * 100) / (100 - WEIGHTS.coverage)
+    : WEIGHTS.coverage * coverage + otherPoints;
   const score = cases.length ? Math.round(points) : 0;
 
   const flags = [
+    ...(storyIssue ? [`⚠ ${storyIssue}`] : []),
     `Score ${score}%`,
-    `${covered}/${criteria.length} criteria`,
+    storyIssue ? "coverage not scored" : `${covered}/${criteria.length} criteria`,
     `${duplicates.length} duplicate${duplicates.length === 1 ? "" : "s"}`,
     ...[...new Set(contradictions.map((c) => c.case))].map((n) => `⚠ contradiction in case ${n}`),
     ...(incomplete.length ? [`⚠ ${incomplete.length} incomplete`] : []),
@@ -193,6 +201,7 @@ export function scoreTestCases(story: Story, cases: TestCase[]): Score {
     contradictions,
     incomplete,
     sizeOk,
+    storyIssue,
     summary: flags.join(" · "),
   };
 }

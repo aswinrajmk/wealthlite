@@ -118,3 +118,20 @@ test("dice is 1 for identical text and low for unrelated text", () => {
   assert.equal(dice("Sign out", "sign out"), 1);
   assert.ok(dice("Sign out", "Export CSV") < 0.3);
 });
+
+test("a story without acceptance criteria is flagged as a story problem, not scored as missed coverage", () => {
+  // KAN-26 on 2026-11-21: only a title, no description. The draft used to score 45% with "0/0 criteria".
+  const titleOnly: Story = { key: "KAN-26", summary: "I need to sort my holdings according to value", description: "" };
+  const s = scoreTestCases(
+    titleOnly,
+    KAN6_DRAFT.map((c) => ({ ...c, preconditions: "Signed in" })),
+  );
+  assert.equal(s.storyIssue, "Story has no acceptance criteria: fix the story first");
+  assert.equal(s.criteria.total, 0);
+  assert.equal(s.score, 100); // the other checks all pass, scaled to 100
+  assert.match(
+    s.summary,
+    /^⚠ Story has no acceptance criteria: fix the story first · Score 100% · coverage not scored/,
+  );
+  assert.equal(scoreTestCases(KAN6, KAN6_DRAFT).storyIssue, null);
+});
