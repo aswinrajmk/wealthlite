@@ -41,7 +41,7 @@
             },
             {
               "name": "fields",
-              "value": "summary,labels,issuelinks"
+              "value": "summary,description,labels,issuelinks"
             },
             {
               "name": "maxResults",
@@ -67,7 +67,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "\n// Group the labelled Test issues by their story (Test --Tests--> Story) and take the oldest story only:\n// one story per execution, because each run pauses on its own approval link.\nconst byStory = new Map();\nfor (const issue of $input.first().json.issues || []) {\n  const link = (issue.fields.issuelinks || []).find((l) => l.type.name === 'Tests' && l.outwardIssue);\n  if (!link) continue; // a Test with no story cannot be traced, so it is skipped\n  const story = link.outwardIssue;\n  const entry = byStory.get(story.key) || { story: story.key, title: story.fields.summary, tests: [] };\n  const suite = issue.fields.labels.includes('smoke') ? 'smoke' : 'regression';\n  entry.tests.push({ key: issue.key, suite, title: issue.fields.summary.replace(/^\\[KAN-\\d+\\]\\s*/, '') });\n  byStory.set(story.key, entry);\n}\nconst first = [...byStory.values()][0];\nif (!first) return [];\nconst lines = first.tests.map((t) => `\u2022 ${t.key} (${t.suite}) ${t.title}`);\nconst text = [`\ud83e\udd16 Automate ${first.tests.length} test(s) for ${first.story}: ${first.title}`, '', ...lines,\n  '', `${\"https://aswinnrk.atlassian.net\"}/browse/${first.story}`].join('\\n').slice(0, 3800);\nreturn [{ json: { ...first, keys: first.tests.map((t) => t.key).join(','), text } }];\n"
+        "jsCode": "\n// Group the labelled Test issues by their story (Test --Tests--> Story) and take the oldest story only:\n// one story per execution, because each run pauses on its own approval link.\nfunction adfText(node) {\n  if (!node) return '';\n  if (node.type === 'text') return node.text || '';\n  if (node.type === 'hardBreak') return '\\n';\n  const inner = (node.content || []).map(adfText).join('');\n  if (node.type === 'listItem') return '- ' + inner;\n  if (['paragraph', 'heading', 'codeBlock', 'blockquote'].includes(node.type)) return inner + '\\n';\n  return inner;\n}\n// Folder under tests/ui for a local draft, guessed from the story title (Claude Code picks its own).\nfunction featureOf(title) {\n  const t = title.toLowerCase();\n  if (/sign|log ?in|log ?out|password|auth/.test(t)) return 'auth';\n  if (/holding|portfolio|total|value/.test(t)) return 'portfolio';\n  return 'stories';\n}\nconst byStory = new Map();\nfor (const issue of $input.first().json.issues || []) {\n  const link = (issue.fields.issuelinks || []).find((l) => l.type.name === 'Tests' && l.outwardIssue);\n  if (!link) continue; // a Test with no story cannot be traced, so it is skipped\n  const story = link.outwardIssue;\n  const entry = byStory.get(story.key) ||\n    { story: story.key, title: story.fields.summary, feature: featureOf(story.fields.summary), tests: [] };\n  const suite = issue.fields.labels.includes('smoke') ? 'smoke' : 'regression';\n  entry.tests.push({ key: issue.key, suite, title: issue.fields.summary.replace(/^\\[KAN-\\d+\\]\\s*/, ''),\n    description: adfText(issue.fields.description).trim() });\n  byStory.set(story.key, entry);\n}\nconst first = [...byStory.values()][0];\nif (!first) return [];\nconst lines = first.tests.map((t) => `\u2022 ${t.key} (${t.suite}) ${t.title}`);\nconst text = [`\ud83e\udd16 Automate ${first.tests.length} test(s) for ${first.story}: ${first.title}`, '', ...lines,\n  '', `${\"https://aswinnrk.atlassian.net\"}/browse/${first.story}`].join('\\n').slice(0, 3800);\nreturn [{ json: { ...first, keys: first.tests.map((t) => t.key).join(','), text } }];\n"
       }
     },
     {
@@ -129,7 +129,7 @@
       ],
       "parameters": {
         "chatId": "<TELEGRAM_CHAT_ID>",
-        "text": "={{ $json.text }}\n\nWrite Playwright tests for these in qa-tests?",
+        "text": "={{ $json.text }}\n\nWho should write the Playwright tests?\n\u2705 Claude: Claude Code in GitHub Actions (needs your Claude subscription)\n\ud83c\udfe0 Local: qwen3.5:2b on this Mac, one draft, review it closely",
         "additionalFields": {
           "appendAttribution": false
         },
@@ -140,9 +140,15 @@
               "row": {
                 "buttons": [
                   {
-                    "text": "\u2705 Automate",
+                    "text": "\u2705 Claude",
                     "additionalFields": {
-                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=approve&s=automate')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=claude&s=automate')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
+                    }
+                  },
+                  {
+                    "text": "\ud83c\udfe0 Local",
+                    "additionalFields": {
+                      "url": "={{ ((u) => u + (u.includes('?') ? '&' : '?') + 'd=local&s=automate')($execution.resumeUrl.replace('//localhost', '//127.0.0.1')) }}"
                     }
                   },
                   {
@@ -183,7 +189,7 @@
       }
     },
     {
-      "name": "Approved?",
+      "name": "Claude?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
@@ -196,7 +202,7 @@
             {
               "value1": "={{ $json.query ? $json.query.d : 'timeout' }}",
               "operation": "equal",
-              "value2": "approve"
+              "value2": "claude"
             },
             {
               "value1": "={{ $json.query ? $json.query.s : '' }}",
@@ -209,24 +215,50 @@
       }
     },
     {
-      "name": "Split tests (queue)",
+      "name": "Local?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.query ? $json.query.d : 'timeout' }}",
+              "operation": "equal",
+              "value2": "local"
+            },
+            {
+              "value1": "={{ $json.query ? $json.query.s : '' }}",
+              "operation": "equal",
+              "value2": "automate"
+            }
+          ]
+        },
+        "combineOperation": "all"
+      }
+    },
+    {
+      "name": "Split tests (Claude)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         1980,
-        -160
+        -320
       ],
       "parameters": {
         "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
       }
     },
     {
-      "name": "Label auto-queued",
+      "name": "Label auto-queued (Claude)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         2200,
-        -160
+        -320
       ],
       "parameters": {
         "method": "PUT",
@@ -246,24 +278,24 @@
       }
     },
     {
-      "name": "One per story (dispatch)",
+      "name": "One per story (Claude)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         2420,
-        -160
+        -320
       ],
       "parameters": {
         "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
       }
     },
     {
-      "name": "Dispatch to qa-tests",
+      "name": "Dispatch to qa-tests (Claude)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         2640,
-        -160
+        -320
       ],
       "parameters": {
         "method": "POST",
@@ -281,7 +313,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ event_type: 'jira-tests-labelled', client_payload: { story: $json.story } }) }}",
+        "jsonBody": "={{ JSON.stringify({ event_type: 'jira-tests-labelled', client_payload: { story: $json.story, engine: 'claude' } }) }}",
         "options": {}
       },
       "credentials": {
@@ -292,16 +324,236 @@
       }
     },
     {
-      "name": "Confirm dispatched",
+      "name": "Confirm Claude",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
         2860,
-        -160
+        -320
       ],
       "parameters": {
         "chatId": "<TELEGRAM_CHAT_ID>",
-        "text": "=\ud83d\ude80 {{ $('Group by story').first().json.story }}: qa-tests is writing the tests ({{ $('Group by story').first().json.keys }}). You'll get the PR here.",
+        "text": "=\ud83d\ude80 {{ $('Group by story').first().json.story }}: Claude Code is writing the tests ({{ $('Group by story').first().json.keys }}). You'll get the PR here.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Split tests (local)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
+      }
+    },
+    {
+      "name": "Label auto-queued (local)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://aswinnrk.atlassian.net/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"update\": {\"labels\": [{\"remove\": \"auto-pending\"}, {\"add\": \"auto-queued\"}]}}",
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "<set-in-n8n>",
+          "name": "Jira WealthLite"
+        }
+      }
+    },
+    {
+      "name": "One per story (local)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
+      }
+    },
+    {
+      "name": "Tell drafting locally",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\ud83c\udfe0 {{ $('Group by story').first().json.story }}: qwen3.5:2b is drafting the spec on this Mac. This takes a few minutes.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "<set-in-n8n>",
+          "name": "Telegram aswinqabot"
+        }
+      }
+    },
+    {
+      "name": "Context files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// One item per framework file to read from GitHub.\nreturn [\"docs/CONVENTIONS.md\", \"src/fixtures/index.ts\", \"src/fixtures/pages.fixture.ts\", \"src/fixtures/auth.fixture.ts\", \"src/pages/LoginPage.ts\", \"src/pages/PortfolioPage.ts\", \"src/components/AppHeader.ts\", \"src/components/HoldingsTable.ts\", \"src/data/users.ts\", \"tests/ui/auth/kan-6-sign-out.spec.ts\"].map((path) => ({ json: { path } }));\n"
+      }
+    },
+    {
+      "name": "Read file from GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        0
+      ],
+      "parameters": {
+        "url": "=https://api.github.com/repos/aswinrajmk/qa-tests/contents/{{ $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<set-in-n8n>",
+          "name": "GitHub qa-tests dispatch"
+        }
+      }
+    },
+    {
+      "name": "Build prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// A 2B model copies examples and drifts from instructions, so the structure is not left to it: this node writes\n// the skeleton (describe, test titles, exact tags, one test.step per Jira step) and the model only fills the bodies.\nconst g = $('Group by story').first().json;\nconst paths = $('Context files').all().map((i) => i.json.path);\nconst EXAMPLE = 'tests/ui/auth/kan-6-sign-out.spec.ts';\nconst files = $input.all().map((item, i) => {\n  const note = paths[i] === EXAMPLE ? ' (EXAMPLE ONLY: already automated, do NOT copy its tests, titles or tags)' : '';\n  return `--- FILE ${paths[i]}${note} ---\\n${item.json.data || ''}`;\n}).join('\\n\\n');\nconst q = (t) => JSON.stringify(String(t).replace(/\\s+/g, ' ').trim());\n// Steps and the expected result from the Test issue description (\"Steps\" list, \"Expected result\" section).\nfunction parse(desc) {\n  const lines = (desc || '').split('\\n').map((l) => l.trim()).filter(Boolean);\n  const steps = []; let expected = ''; let mode = '';\n  for (const l of lines) {\n    if (/^steps$/i.test(l)) { mode = 'steps'; continue; }\n    if (/^expected result$/i.test(l)) { mode = 'expected'; continue; }\n    if (/^preconditions$/i.test(l)) { mode = 'pre'; continue; }\n    if (mode === 'steps') steps.push(l.replace(/^[-\\d.)\\s]+/, ''));\n    else if (mode === 'expected') expected += (expected ? ' ' : '') + l;\n  }\n  return { steps: steps.length ? steps : ['Do the action under test'], expected: expected || 'See the test title' };\n}\nconst tests = g.tests.map((t) => {\n  const { steps, expected } = parse(t.description);\n  const body = [\n    ...steps.map((st) => `      await test.step(${q(st)}, async () => {\\n        // TODO\\n      });`),\n    `      await test.step(${q('Expect: ' + expected)}, async () => {\\n        // TODO: await expect(...)\\n      });`,\n  ].join('\\n\\n');\n  return `  test(${q(t.title)}, { tag: [${q('@' + t.key)}, ${q('@' + t.suite)}] }, async ({ signedIn, loginPage, portfolioPage }) => {\\n${body}\\n  });`;\n}).join('\\n\\n');\nconst skeleton = `import { expect, test } from \"../../../src/fixtures/index.ts\";\\n\\n` +\n  `test.describe(${q(g.title)}, { tag: ${q('@' + g.story)} }, () => {\\n${tests}\\n});\\n`;\nconst system = [\n  'You are a senior QA automation engineer completing a Playwright + TypeScript spec for the qa-tests repo.',\n  'You get a SKELETON. Return the same file with every TODO replaced by real code. Rules:',\n  '- Keep the import, the describe, every test title and every tag EXACTLY as in the skeleton. Add no other tests.',\n  '- Use only the fixtures (signedIn, loginPage, portfolioPage) and the methods shown in the repository files.',\n  '  Remove fixtures a test does not use from its parameter list.',\n  '- Never write CSS or XPath selectors. Never use waitForTimeout, test.only or test.skip.',\n  '- Assertions use web-first expect, e.g. await expect(loginPage.page).toHaveURL(/\\\\/login$/).',\n  '- Reply with the complete file in a single ```ts code block and nothing else.',\n].join('\\n');\nconst user = [\n  `Repository files for reference:\\n\\n${files}`,\n  `Story ${g.story}: ${g.title}`,\n  `SKELETON to complete:\\n\\n\\`\\`\\`ts\\n${skeleton}\\`\\`\\``,\n].join('\\n\\n');\nreturn [{ json: { skeleton, body: {\n  model: \"qwen3.5:2b\", stream: false, think: false,\n  options: { temperature: 0.1, num_ctx: 16384 },\n  messages: [{ role: 'system', content: system }, { role: 'user', content: user }],\n} } }];\n"
+      }
+    },
+    {
+      "name": "Local model writes spec",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:11434/api/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Prepare local dispatch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\n// The model's reply goes to qa-tests as is; qa-tests extracts the code and checks it. An empty or failed reply\n// still goes, so the run fails there and the Jira tests are labelled auto-failed with a link to the log.\nconst g = $('Group by story').first().json;\nlet spec = ($json.message && $json.message.content) || '';\n// No usable reply (timeout, Ollama down, or no test in it): send the skeleton instead, so the owner still gets a\n// draft PR with the structure and tags right, to finish by hand.\nif (!/\\btest(\\.describe)?\\s*\\(/.test(spec)) spec = $('Build prompt').first().json.skeleton;\nreturn [{ json: { payload: { event_type: 'jira-tests-labelled', client_payload: {\n  story: g.story, engine: 'local', model: \"qwen3.5:2b\", feature: g.feature, spec: spec.slice(0, 30000),\n} } } }];\n"
+      }
+    },
+    {
+      "name": "Dispatch to qa-tests (local)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/aswinrajmk/qa-tests/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<set-in-n8n>",
+          "name": "GitHub qa-tests dispatch"
+        }
+      }
+    },
+    {
+      "name": "Confirm local",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        0
+      ],
+      "parameters": {
+        "chatId": "<TELEGRAM_CHAT_ID>",
+        "text": "=\ud83d\udce8 {{ $('Group by story').first().json.story }}: local draft sent to qa-tests for checks. You'll get the PR here (a draft PR if the checks fail).",
         "additionalFields": {
           "appendAttribution": false
         }
@@ -318,8 +570,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
-        160
+        2200,
+        320
       ],
       "parameters": {
         "jsCode": "\n// One item per Test issue, so the next HTTP node relabels each of them.\nreturn $('Group by story').first().json.tests.map((t) => ({ json: t }));\n"
@@ -330,8 +582,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2200,
-        160
+        2420,
+        320
       ],
       "parameters": {
         "method": "PUT",
@@ -355,8 +607,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2420,
-        160
+        2640,
+        320
       ],
       "parameters": {
         "jsCode": "\n// The relabelling ran once per test; continue once per story.\nreturn [{ json: $('Group by story').first().json }];\n"
@@ -367,8 +619,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2640,
-        160
+        2860,
+        320
       ],
       "parameters": {
         "chatId": "<TELEGRAM_CHAT_ID>",
@@ -467,18 +719,36 @@
       "main": [
         [
           {
-            "node": "Approved?",
+            "node": "Claude?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Approved?": {
+    "Claude?": {
       "main": [
         [
           {
-            "node": "Split tests (queue)",
+            "node": "Split tests (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Local?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local?": {
+      "main": [
+        [
+          {
+            "node": "Split tests (local)",
             "type": "main",
             "index": 0
           }
@@ -492,44 +762,154 @@
         ]
       ]
     },
-    "Split tests (queue)": {
+    "Split tests (Claude)": {
       "main": [
         [
           {
-            "node": "Label auto-queued",
+            "node": "Label auto-queued (Claude)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Label auto-queued": {
+    "Label auto-queued (Claude)": {
       "main": [
         [
           {
-            "node": "One per story (dispatch)",
+            "node": "One per story (Claude)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "One per story (dispatch)": {
+    "One per story (Claude)": {
       "main": [
         [
           {
-            "node": "Dispatch to qa-tests",
+            "node": "Dispatch to qa-tests (Claude)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Dispatch to qa-tests": {
+    "Dispatch to qa-tests (Claude)": {
       "main": [
         [
           {
-            "node": "Confirm dispatched",
+            "node": "Confirm Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split tests (local)": {
+      "main": [
+        [
+          {
+            "node": "Label auto-queued (local)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label auto-queued (local)": {
+      "main": [
+        [
+          {
+            "node": "One per story (local)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One per story (local)": {
+      "main": [
+        [
+          {
+            "node": "Tell drafting locally",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tell drafting locally": {
+      "main": [
+        [
+          {
+            "node": "Context files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context files": {
+      "main": [
+        [
+          {
+            "node": "Read file from GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read file from GitHub": {
+      "main": [
+        [
+          {
+            "node": "Build prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompt": {
+      "main": [
+        [
+          {
+            "node": "Local model writes spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local model writes spec": {
+      "main": [
+        [
+          {
+            "node": "Prepare local dispatch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare local dispatch": {
+      "main": [
+        [
+          {
+            "node": "Dispatch to qa-tests (local)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch to qa-tests (local)": {
+      "main": [
+        [
+          {
+            "node": "Confirm local",
             "type": "main",
             "index": 0
           }
