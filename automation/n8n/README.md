@@ -61,8 +61,9 @@ qa-tests then writes the specs (`automate-from-jira.yml`), opens PR `auto/<story
 All of a story's labelled tests go into one spec and one PR. Labelling another test of the same story later
 updates the open PR, or opens a new one.
 
-Setup: add `GITHUB_DISPATCH_TOKEN` to `~/.config/wealthlite/jira.env`. It must be a fine-grained PAT for
-`aswinrajmk/qa-tests` only, with **Contents: read and write**, which repository_dispatch needs. Then run
+Setup: add `QA_DISPATCH_TOKEN` to `~/.config/wealthlite/jira.env`. It is the same kind of fine-grained PAT as
+the wealthlite secret of that name, with **Contents: read and write** on `aswinrajmk/qa-tests`, which
+repository_dispatch needs. Then run
 `python3 -I automation/n8n/build_automation.py automation/n8n/jira-test-automation.json --push`, put the
 printed ids into the script, and activate the workflow in n8n. qa-tests needs the secrets `JIRA_SITE`,
 `JIRA_EMAIL` and `JIRA_TOKEN`.

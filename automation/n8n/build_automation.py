@@ -6,7 +6,7 @@ Usage (from the repo root):
     python3 -I automation/n8n/build_automation.py automation/n8n/jira-test-automation.json [--push]
 
 Without --push it only writes the secret-free JSON. --push needs JIRA_SITE, TELEGRAM_CHAT_ID, N8N_API_KEY and
-GITHUB_DISPATCH_TOKEN (fine-grained PAT, qa-tests only, Contents: read and write). The first push creates the
+QA_DISPATCH_TOKEN (fine-grained PAT, qa-tests only, Contents: read and write). The first push creates the
 workflow (inactive) and its GitHub credential and prints their ids; put them in WF_ID / GITHUB_CRED below.
 
 Label states on Test issues (see README):
@@ -188,7 +188,7 @@ def call(method, path, body=None):
 if PUSH:
     if not GITHUB_CRED["id"]:
         cred = call("POST", "/credentials", {"name": GITHUB_CRED["name"], "type": "httpHeaderAuth", "data": {
-            "name": "Authorization", "value": "Bearer " + os.environ["GITHUB_DISPATCH_TOKEN"]}})
+            "name": "Authorization", "value": "Bearer " + os.environ["QA_DISPATCH_TOKEN"]}})
         GITHUB_CRED["id"] = cred["id"]
         print("created credential:", cred["id"], "(put it in GITHUB_CRED)")
     if WF_ID:
