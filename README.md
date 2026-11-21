@@ -37,19 +37,18 @@ Live: https://wealthlite.aswin-qa.workers.dev (not indexed by search engines).
 `data-testid` attributes on key elements are deliberate. A text change can be healed; removing a test
 id cannot.
 
-## Requirements: write the requirement, get the tests
+## Requirements: Jira story to automated tests
 
-Requirements live as [issues with the `requirement` label](https://github.com/aswinrajmk/wealthlite/issues?q=label%3Arequirement)
-(use the **Requirement** issue form: user story plus Given/When/Then acceptance criteria).
+Requirements are Stories in the WealthLite Jira project (`KAN`), with Given/When/Then acceptance criteria.
 
-1. Open or edit a requirement issue. [`requirement.yml`](.github/workflows/requirement.yml) tells qa-tests.
-2. In qa-tests, Claude Code drafts tests tagged `@REQ-<issue>`, runs them against this app, and opens a
-   pull request. The Telegram bot reports how many pass; tests for behaviour not built yet fail on purpose.
+1. Create a Story. The local n8n workflow ([`automation/n8n`](automation/n8n/README.md)) analyses it and drafts
+   test cases with a local model. After two approvals in Telegram, it creates Jira **Test** issues linked to
+   the story.
+2. Label the Test issues worth automating `smoke` or `regression`. After one more approval in Telegram, qa-tests
+   drafts the Playwright tests in a pull request, tagged with the story and Test issue keys.
 3. Merge the tests, then build the feature here (by hand, or ask the Telegram bot for a code change).
-4. The deploy runs the suite, and the dashboard's
+4. Each deploy runs the smoke suite, and the dashboard's
    [requirements coverage](https://portfolio.aswin-qa.workers.dev/dashboard/#requirements) turns green.
-
-Only issues the owner wrote, labelled and edited trigger this, because the text goes to an AI agent.
 
 ## Run locally
 

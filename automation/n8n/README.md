@@ -1,4 +1,4 @@
-# Jira story → approved test cases (n8n)
+# Jira story → approved test cases → automated tests (n8n)
 
 A local n8n workflow that turns new stories on the WealthLite Jira board (project `KAN`) into
 Jira **Test** issues. You approve each step in Telegram.
@@ -9,10 +9,12 @@ Every minute → new KAN Story? → Qwen (Ollama) analysis → Telegram ✅/❌
   → one "Test" issue per case, linked "is tested by" to the story → Telegram summary
 ```
 
-| File                     | Purpose                                                                   |
-| ------------------------ | ------------------------------------------------------------------------- |
-| `jira-story-intake.json` | The workflow, ready to import. Credentials and chat id are placeholders.  |
-| `build_intake.py`        | Generates the workflow, pushes it to the local n8n and rewrites the JSON. |
+| File                        | Purpose                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `jira-story-intake.json`    | Story → test cases workflow, ready to import. Credentials and chat id are placeholders. |
+| `build_intake.py`           | Generates the intake workflow, pushes it to the local n8n and rewrites the JSON.        |
+| `jira-test-automation.json` | Suite label → automated tests workflow (see below).                                     |
+| `build_automation.py`       | Generates the automation workflow. With `--push` it also creates it in n8n.             |
 
 ## Writing a story
 
@@ -32,6 +34,39 @@ Every minute → new KAN Story? → Qwen (Ollama) analysis → Telegram ✅/❌
 | `ai-rejected`          | Rejected, or no answer within 24h. Remove the label to run again. |
 
 Created tests get `ai-generated` plus `tc-positive`, `tc-negative` or `tc-edge`.
+
+## Automating labelled tests ("Jira Test Automation")
+
+Not every manual test case is worth automating. Pick the ones that are by adding a label to the **Test** issue:
+`smoke` (critical path, runs on every deploy) or `regression` (nightly).
+
+```
+Every minute → Test issues labelled smoke/regression, no auto-* label → group by story (oldest story first)
+  → label auto-pending → Telegram ✅ Automate / ❌ Not now
+  → ✅ label auto-queued → repository_dispatch "jira-tests-labelled" {story} to qa-tests → Telegram
+  → ❌ or no answer in 24h → label auto-rejected
+```
+
+qa-tests then writes the specs (`automate-from-jira.yml`), opens PR `auto/<story>`, and moves the labels on:
+
+| Label           | Meaning                                                                  |
+| --------------- | ------------------------------------------------------------------------ |
+| `auto-pending`  | Waiting for your answer in Telegram                                      |
+| `auto-queued`   | Sent to qa-tests                                                         |
+| `auto-pr-open`  | PR open, linked in a comment on the story                                |
+| `automated`     | PR merged (or the tests already matched)                                 |
+| `auto-failed`   | The qa-tests run failed. Remove the label to retry                       |
+| `auto-rejected` | You said not now, or didn't answer in 24h. Remove the label to ask again |
+
+All of a story's labelled tests go into one spec and one PR. Labelling another test of the same story later
+updates the open PR, or opens a new one.
+
+Setup: add `QA_DISPATCH_TOKEN` to `~/.config/wealthlite/jira.env`. It is the same kind of fine-grained PAT as
+the wealthlite secret of that name, with **Contents: read and write** on `aswinrajmk/qa-tests`, which
+repository_dispatch needs. Then run
+`python3 -I automation/n8n/build_automation.py automation/n8n/jira-test-automation.json --push`, put the
+printed ids into the script, and activate the workflow in n8n. qa-tests needs the secrets `JIRA_SITE`,
+`JIRA_EMAIL` and `JIRA_TOKEN`.
 
 ## Setup
 
