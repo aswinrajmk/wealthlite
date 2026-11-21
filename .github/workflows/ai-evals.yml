@@ -4,6 +4,13 @@ name: AI evals
 # the prompt on every golden story with the local model (Ollama, on the runner's CPU), score the drafts, and fail
 # if the average drops more than 5 points below automation/evals/baseline.json. The table lands in the run summary.
 on:
+  # On main, the run is also recorded on the QA dashboard (AI quality section).
+  push:
+    branches: [main]
+    paths:
+      - automation/prompts/**
+      - automation/evals/**
+      - automation/n8n/build_intake.py
   pull_request:
     paths:
       - automation/prompts/**
@@ -63,9 +70,12 @@ jobs:
         env:
           REPORT: ${{ runner.temp }}/ai-eval.md
           NO_GATE: ${{ inputs.model != '' && '--no-gate' || '' }}
+          RECORD: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--record' || '' }}
+          AI_EVALS_TOKEN: ${{ secrets.AI_EVALS_TOKEN }}
+          CI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -o pipefail
-          node automation/evals/run.ts $NO_GATE 2>&1 | tee "$RUNNER_TEMP/ai-eval.log"
+          node automation/evals/run.ts $NO_GATE $RECORD 2>&1 | tee "$RUNNER_TEMP/ai-eval.log"
 
       - name: Publish the report
         if: ${{ !cancelled() }}

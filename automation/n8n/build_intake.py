@@ -14,6 +14,9 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 API_KEY = os.environ["N8N_API_KEY"]
 JIRA_CRED = {"id": "VD72DSMts0FXFVUi", "name": "Jira WealthLite"}
 TG_CRED = {"id": "mrivhYzNiVsgPznQ", "name": "Telegram aswinqabot"}
+# Header auth "Bearer <AI_EVALS_TOKEN>" for the portfolio's POST /api/ai-evals. Empty id = not set up yet, and the
+# "Record draft score" node is left out, so the workflow works the same without it.
+EVALS_CRED = {"id": "", "name": "Portfolio AI evals"}
 REPO_OUT = sys.argv[1]
 
 STATE_LABELS = "ai-new, ai-analysing, ai-analysis-approved, ai-tests-approved, ai-done, ai-rejected"
@@ -299,7 +302,7 @@ nodes = [
     node("Format test cases", "n8n-nodes-base.code", 2, [2860, -160], {"jsCode": FORMAT_TESTS}),
     node("Ask tests approval", "n8n-nodes-base.telegram", 1.2, [3080, -160], {
         "chatId": CHAT_ID,
-        "text": "={{ $json.text }}\n\nCreate these as Jira Test issues?",
+        "text": "={{ $('Format test cases').first().json.text }}\n\nCreate these as Jira Test issues?",
         "replyMarkup": "inlineKeyboard",
         "inlineKeyboard": approval_buttons("tests"),
         "additionalFields": {"appendAttribution": False},
@@ -369,8 +372,25 @@ def chain(*names):
 chain("Every minute", "Search new stories", "Flatten stories", "Claim story (label ai-new)", "Qwen analysis",
       "Format message", "Ask analysis approval", "Wait for analysis decision", "Analysis approved?")
 connections.update(link("Analysis approved?", ["Comment analysis on story"], ["Comment rejection on story"]))
+if EVALS_CRED["id"]:
+    # Record each draft's score on the QA dashboard. A failure never blocks the approval.
+    nodes.append({**node("Record draft score", "n8n-nodes-base.httpRequest", 4.2, [2970, -320], {
+        "method": "POST",
+        "url": "https://portfolio.aswin-qa.workers.dev/api/ai-evals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": True,
+        "specifyBody": "json",
+        "jsonBody": ("={{ JSON.stringify({ kind: 'live', model: " + json.dumps(PROMPTS["model"]) + ", "
+                     "promptVersion: $json.promptVersion, storyKey: $('Format message').first().json.key, "
+                     "score: $json.evalScore.score, summary: $json.evalScore.summary.slice(0, 500) }) }}"),
+        "options": {"timeout": 10000},
+    }, {"httpHeaderAuth": EVALS_CRED}), "onError": "continueRegularOutput"})
+    scored = ["Format test cases", "Record draft score"]
+else:
+    scored = ["Format test cases"]
 chain("Comment analysis on story", "Label analysis approved", "Confirm approval", "Qwen test cases",
-      "Format test cases", "Ask tests approval", "Wait for tests decision", "Tests approved?")
+      *scored, "Ask tests approval", "Wait for tests decision", "Tests approved?")
 connections.update(link("Tests approved?", ["Prepare test issues"], ["Label tests rejected"]))
 chain("Prepare test issues", "Create Test issue", "Summarize created", "Label done", "Confirm tests created")
 chain("Label tests rejected", "Confirm tests rejected")
