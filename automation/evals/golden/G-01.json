@@ -1,0 +1,7 @@
+{
+  "key": "G-01",
+  "summary": "Sign in with email and password",
+  "description": "As an advisor, I want to sign in with my email and password so that only I can see my clients' portfolio.\nAcceptance criteria:\n- Given the demo account, when I submit the correct email and password, then I land on the portfolio page and see \"Welcome back, <name>\"\n- Given a wrong password, when I submit, then I see \"Email or password is incorrect.\" and stay on the login page\n- Given an empty form, when I submit, then I see \"Enter your email and password.\"",
+  "expectedCriteria": 3,
+  "traps": ["negative cases", "exact UI text"]
+}

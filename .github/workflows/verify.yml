@@ -19,4 +19,6 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Unit tests for the AI eval scorer and golden set
+        run: npm run test:evals
       - run: npm run build

@@ -1,0 +1,7 @@
+{
+  "key": "G-03",
+  "summary": "Holdings table",
+  "description": "As a signed-in advisor, I want to see the holdings in a table so that I know what the portfolio holds.\nAcceptance criteria:\n- Given I am signed in, when I open the portfolio, then a table lists five holdings\n- Each row shows the name, units, unit price and value",
+  "expectedCriteria": 2,
+  "traps": ["second criterion is not Given/When/Then"]
+}

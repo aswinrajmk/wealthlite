@@ -12,6 +12,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
+    "test:evals": "node --test \"automation/evals/**/*.test.ts\"",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

@@ -1,0 +1,7 @@
+{
+  "key": "G-08",
+  "summary": "Password reset",
+  "description": "As an advisor who forgot my password, I want to reset it by email so that I can sign in again.\nAcceptance criteria:\n- Given the login page, when I click \"Forgot password?\", then I can enter my email\n- Given any email, when I submit it, then I see \"If the account exists, we sent a reset link.\" (no account enumeration)\n- Given a reset link older than 1 hour, when I open it, then I see that the link expired",
+  "expectedCriteria": 3,
+  "traps": ["security: no account enumeration", "expiry"]
+}

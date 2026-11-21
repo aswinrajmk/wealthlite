@@ -1,0 +1,7 @@
+{
+  "key": "G-20",
+  "summary": "Five criteria: statement download",
+  "description": "As an advisor, I want to download a monthly PDF statement so that I can send it to my client.\nAcceptance criteria:\n- Given the portfolio page, when I choose a month and click \"Download statement\", then a PDF downloads\n- The PDF shows the client name, the month and the holdings\n- The PDF total equals the dashboard total for the last day of that month\n- Given a month before the account opened, then the month cannot be chosen\n- Given the statement is generating, then the button shows a loading state and cannot be clicked twice",
+  "expectedCriteria": 5,
+  "traps": ["many criteria: the minimal-set rule (3-6 cases) is under pressure"]
+}

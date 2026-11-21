@@ -1,0 +1,7 @@
+{
+  "key": "G-10",
+  "summary": "Filter holdings by asset class",
+  "description": "As an advisor, I want to filter holdings by asset class so that I can review equities and bonds separately.\nAcceptance criteria:\n- Given the holdings table, when I choose Equities, then only equity holdings are shown and the total updates to match\n- Given a filter with no matching holdings, then I see \"No holdings in this asset class.\"",
+  "expectedCriteria": 2,
+  "traps": ["empty state", "total must follow the filter"]
+}

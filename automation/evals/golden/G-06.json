@@ -1,0 +1,7 @@
+{
+  "key": "G-06",
+  "summary": "Export holdings as CSV",
+  "description": "As an advisor, I want to export the holdings as a CSV file so that I can share them with my client's accountant.\nAcceptance criteria:\n- Given I am on the portfolio page, when I click \"Export CSV\", then a file named holdings.csv downloads\n- The file has one header row and one row per holding\n- Values use a dot as the decimal separator and no currency symbol",
+  "expectedCriteria": 3,
+  "traps": ["file download", "format rules without Given"]
+}

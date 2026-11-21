@@ -1,0 +1,7 @@
+{
+  "key": "G-16",
+  "summary": "Remember me",
+  "description": "As an advisor on my own laptop, I want to stay signed in so that I do not sign in every morning.\nAcceptance criteria:\n- Given I tick \"Remember me\" and sign in, when I return within 30 days, then I am still signed in\n- Given I did not tick \"Remember me\", when I close the browser and return, then I must sign in again",
+  "expectedCriteria": 2,
+  "traps": ["persistence", "negative of the same feature"]
+}

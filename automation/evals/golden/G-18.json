@@ -1,0 +1,7 @@
+{
+  "key": "G-18",
+  "summary": "Two criteria in one line",
+  "description": "As an advisor, I want to rename a portfolio so that it matches my client's name.\nAcceptance criteria:\n- Given a portfolio, when I rename it to \"Smith family\", then the new name shows in the header and in the portfolio list\n- Given an empty name, when I save, then I see \"Enter a portfolio name.\" and the old name stays",
+  "expectedCriteria": 2,
+  "traps": ["one line holds two checks (header and list)"]
+}

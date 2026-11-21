@@ -1,0 +1,7 @@
+{
+  "key": "G-05",
+  "summary": "Holdings API requires a session",
+  "description": "As the product owner, I want holdings data available only to signed-in users.\nAcceptance criteria:\n- Given no session, when I call GET /api/holdings, then I get 401 with {\"error\": \"unauthorized\"}\n- Given a valid session, when I call GET /api/holdings, then I get 200 with five holdings in GBP",
+  "expectedCriteria": 2,
+  "traps": ["API, not UI", "status codes"]
+}
