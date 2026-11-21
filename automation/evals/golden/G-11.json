@@ -1,0 +1,7 @@
+{
+  "key": "G-11",
+  "summary": "Show daily change",
+  "description": "As an investor, I want to see today's change for each holding so that I notice big moves.\nAcceptance criteria:\n- Given a holding went up, then its daily change shows with a + sign and the up label\n- Given a holding went down, then its daily change shows with a − sign and the down label\n- Given no price today, then the daily change shows a dash",
+  "expectedCriteria": 3,
+  "traps": ["colour must not be the only signal", "three states"]
+}

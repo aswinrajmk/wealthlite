@@ -1,0 +1,7 @@
+{
+  "key": "G-07",
+  "summary": "Session timeout",
+  "description": "As a compliance officer, I want idle sessions to end so that an unattended screen does not expose client data.\nAcceptance criteria:\n- Given I am signed in, when I am idle for 15 minutes, then I am signed out and see the login page\n- Given I was signed out by timeout, then the login page says \"You were signed out after 15 minutes of inactivity.\"\n- Given I am active, when I click anywhere, then the idle timer restarts",
+  "expectedCriteria": 3,
+  "traps": ["time-based", "exact message"]
+}

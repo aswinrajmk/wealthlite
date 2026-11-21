@@ -1,0 +1,7 @@
+{
+  "key": "G-14",
+  "summary": "Read-only access for assistants",
+  "description": "As a practice manager, I want assistants to view portfolios without editing so that changes stay with licensed advisors.\nAcceptance criteria:\n- Given I am signed in as an assistant, then I can see the portfolio and holdings\n- Given I am signed in as an assistant, then no edit, export or trade controls are shown\n- Given I am signed in as an assistant, when I call a write API directly, then I get 403",
+  "expectedCriteria": 3,
+  "traps": ["roles and permissions", "API bypass check"]
+}

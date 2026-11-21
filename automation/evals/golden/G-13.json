@@ -1,0 +1,7 @@
+{
+  "key": "G-13",
+  "summary": "API outage message",
+  "description": "As an advisor, I want a clear message when data cannot load so that I do not act on missing numbers.\nAcceptance criteria:\n- Given the holdings API fails, when the portfolio loads, then I see \"We could not load your holdings. Try again.\" and no table\n- Given the error message, when I click Try again, then the holdings load again",
+  "expectedCriteria": 2,
+  "traps": ["error handling", "retry"]
+}

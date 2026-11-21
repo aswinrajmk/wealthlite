@@ -1,0 +1,7 @@
+{
+  "key": "G-15",
+  "summary": "Currency for non-GBP clients",
+  "description": "As an advisor with US clients, I want to see values in the client's currency so that statements match theirs.\nAcceptance criteria:\n- Given a client in USD, then every value and the total show in USD with a $ sign\n- Given a client in GBP, then values show in GBP with a £ sign",
+  "expectedCriteria": 2,
+  "traps": ["localisation", "both states"]
+}

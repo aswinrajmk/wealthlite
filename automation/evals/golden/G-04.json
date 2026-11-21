@@ -1,0 +1,7 @@
+{
+  "key": "G-04",
+  "summary": "Total portfolio value",
+  "description": "As an advisor, I want the total value of the portfolio so that I can report it to my client.\nAcceptance criteria:\n- Given the holdings are loaded, then the total equals the sum of the holding values\n- Given the total is shown, then it is formatted as GBP with two decimals, for example £62,386.20",
+  "expectedCriteria": 2,
+  "traps": ["money formatting", "calculation"]
+}

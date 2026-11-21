@@ -1,0 +1,11 @@
+{
+  "key": "G-02",
+  "summary": "Sign out from the portfolio page",
+  "description": "As a signed-in investor, I want to sign out from the portfolio page so that nobody else can see my holdings on a shared computer.\nAcceptance criteria:\n- Given I am signed in, when I click \"Sign out\", then I return to the login page\n- Given I have signed out, when I open /portfolio directly, then I am sent to the login page\n- Given I have signed out, when I press the browser back button, then holdings are not shown",
+  "expectedCriteria": 3,
+  "traps": [
+    "the real KAN-6 story",
+    "signed-in / signed-out states that invite contradictions",
+    "vague 'shared computer' goal"
+  ]
+}

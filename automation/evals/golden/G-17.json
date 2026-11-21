@@ -1,0 +1,7 @@
+{
+  "key": "G-17",
+  "summary": "Vague story: make the portfolio page faster",
+  "description": "As an advisor, I want the portfolio page to be faster.\nAcceptance criteria:\n- The page should load quickly",
+  "expectedCriteria": 1,
+  "traps": ["deliberately vague: one untestable criterion; good output asks for a number"]
+}

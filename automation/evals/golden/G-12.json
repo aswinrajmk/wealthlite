@@ -1,0 +1,7 @@
+{
+  "key": "G-12",
+  "summary": "Accessible sign-in form",
+  "description": "As a keyboard and screen reader user, I want the sign-in form to be accessible so that I can sign in without a mouse.\nAcceptance criteria:\n- Given the login page, when I tab through it, then focus moves email, password, Sign in, in that order\n- Each field has a visible label that is announced by screen readers\n- Given an error, then focus moves to the error message",
+  "expectedCriteria": 3,
+  "traps": ["non-functional (accessibility)"]
+}

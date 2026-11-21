@@ -1,0 +1,7 @@
+{
+  "key": "G-19",
+  "summary": "Criteria without a heading",
+  "description": "As an advisor, I want to see when prices were last updated so that I know how fresh the values are.\nGiven prices were updated today, when I open the portfolio, then I see \"Prices as of <time>\" under the total\nGiven prices are older than one day, then the note says \"Prices may be out of date\"",
+  "expectedCriteria": 2,
+  "traps": ["no 'Acceptance criteria' heading: the parser must fall back to Given/When/Then lines"]
+}

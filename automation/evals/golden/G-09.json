@@ -1,0 +1,7 @@
+{
+  "key": "G-09",
+  "summary": "Sort holdings by value",
+  "description": "As an advisor, I want to sort holdings by value so that the largest positions are first.\nAcceptance criteria:\n- Given the holdings table, when I click the Value header, then rows sort from highest to lowest value\n- When I click it again, then rows sort from lowest to highest\n- The sorted column shows its direction to screen readers (aria-sort)",
+  "expectedCriteria": 3,
+  "traps": ["toggle state", "accessibility criterion"]
+}
