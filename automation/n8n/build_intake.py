@@ -391,9 +391,12 @@ if EVALS_CRED["id"]:
         "genericAuthType": "httpHeaderAuth",
         "sendBody": True,
         "specifyBody": "json",
-        "jsonBody": ("={{ JSON.stringify({ kind: 'live', model: " + json.dumps(PROMPTS["model"]) + ", "
-                     "promptVersion: $json.promptVersion, storyKey: $('Format message').first().json.key, "
-                     "score: $json.evalScore.score, summary: $json.evalScore.summary.slice(0, 500) }) }}"),
+        "jsonBody": "={{ " + no_double_braces(
+            "JSON.stringify({ kind: 'live', model: " + json.dumps(PROMPTS["model"]) + ", "
+            "promptVersion: $json.promptVersion, storyKey: $('Format message').first().json.key, "
+            "score: $json.evalScore.score, summary: $json.evalScore.summary.slice(0, 500), "
+            # A story-quality problem is recorded so the dashboard can keep it out of the model's average.
+            "details: $json.evalScore.storyIssue ? { storyIssue: $json.evalScore.storyIssue } : undefined })") + " }}",
         "options": {"timeout": 10000},
     }, {"httpHeaderAuth": EVALS_CRED}), "onError": "continueRegularOutput"})
     scored = ["Format test cases", "Record draft score"]
