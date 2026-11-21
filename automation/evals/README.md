@@ -25,11 +25,32 @@ The real KAN-6 draft scores **90%**: full coverage, but cases 1 and 3 contradict
 npm run test:evals
 ```
 
+## The CI gate (`.github/workflows/ai-evals.yml`)
+
+When a pull request changes the intake prompt (`automation/prompts/intake.json`), the scorer, the golden set or
+`build_intake.py`:
+
+1. GitHub Actions installs Ollama and pulls the model.
+2. `run.ts` sends every golden story through the same two calls the n8n workflow makes (analysis, then test cases,
+   with a fixed seed).
+3. Each draft is scored, and the results table appears in the run summary.
+4. The job **fails if the average drops more than 5 points** below `baseline.json`.
+
+The prompt text lives only in `automation/prompts/intake.json`, so production and the eval can't drift apart.
+
+```sh
+node automation/evals/run.ts                       # compare with the baseline (what CI runs)
+node automation/evals/run.ts --update-baseline     # accept the current result as the new baseline
+EVAL_MODEL=qwen2.5-coder:7b node automation/evals/run.ts --no-gate   # try another model
+```
+
+To compare models in CI without gating, run **AI evals** from the Actions tab and type the model name.
+
 ## Where it's used (build order)
 
 1. **Now:** the scorer and the golden set, with unit tests in PR checks.
-2. **Next:** a CI gate. The intake prompt runs against Ollama on every golden story, and a pull request that changes
+2. **Done:** a CI gate. The intake prompt runs against Ollama on every golden story, and a pull request that changes
    the prompt or `LOCAL_MODEL` fails if the average score drops.
-3. **Then:** the live score. n8n scores each real draft and shows it in the Telegram approval, e.g.
+3. **Done:** the live score. n8n scores each real draft and shows it in the Telegram approval, e.g.
    `Score 90% · 3/3 criteria · 0 duplicates · ⚠ contradiction in case 1`.
 4. **Then:** an AI quality section on the QA dashboard.

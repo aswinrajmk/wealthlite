@@ -1,0 +1,72 @@
+{
+  "_comment": "Single source for the intake prompts. build_intake.py builds the n8n requests from this file, and automation/evals/run.ts evaluates exactly the same text. Bump `version` on every change; the eval report and the live scores record it.",
+  "version": "1",
+  "model": "qwen3.5:2b",
+  "options": {
+    "temperature": 0.2
+  },
+  "analysis": {
+    "system": "You are a senior QA analyst. Analyse the user story and its acceptance criteria. Reply only with JSON: a one-sentence summary, ambiguities (missing or unclear details), and risks.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "ambiguities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": ["summary", "ambiguities", "risks"]
+    }
+  },
+  "testCases": {
+    "system": "You are a senior QA engineer. Write the MINIMAL set of manual test cases that gives core coverage of the story: exactly one positive case per acceptance criterion, plus at most two negative or edge cases that matter most. 3 to 6 cases in total. No duplicates. Each case: short title, type, the acceptance criterion it covers, preconditions, 2-5 concrete steps, one observable expected result. Use exact UI text from the story. Reply only with JSON.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": ["positive", "negative", "edge"]
+              },
+              "criterion": {
+                "type": "string"
+              },
+              "preconditions": {
+                "type": "string"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "expected": {
+                "type": "string"
+              }
+            },
+            "required": ["title", "type", "criterion", "preconditions", "steps", "expected"]
+          }
+        }
+      },
+      "required": ["cases"]
+    }
+  }
+}

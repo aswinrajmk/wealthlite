@@ -35,6 +35,11 @@ Every minute → new KAN Story? → Qwen (Ollama) analysis → Telegram ✅/❌
 
 Created tests get `ai-generated` plus `tc-positive`, `tc-negative` or `tc-edge`.
 
+**Every draft is scored before you approve it.** The test-case message starts with an eval line from
+[`automation/evals/score.ts`](../evals/README.md), the same scorer the CI gate uses:
+`📊 Score 90% · 3/3 criteria · 0 duplicates · ⚠ contradiction in case 1`, followed by one `✗` line per problem.
+The prompts themselves live in [`automation/prompts/intake.json`](../prompts/intake.json).
+
 ## Automating labelled tests ("Jira Test Automation")
 
 Not every manual test case is worth automating. Pick the ones that are by adding a label to the **Test** issue:
