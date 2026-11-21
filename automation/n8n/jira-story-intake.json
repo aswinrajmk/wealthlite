@@ -329,7 +329,7 @@
       ],
       "parameters": {
         "chatId": "<TELEGRAM_CHAT_ID>",
-        "text": "={{ $json.text }}\n\nCreate these as Jira Test issues?",
+        "text": "={{ $('Format test cases').first().json.text }}\n\nCreate these as Jira Test issues?",
         "replyMarkup": "inlineKeyboard",
         "inlineKeyboard": {
           "rows": [
@@ -622,6 +622,34 @@
           "name": "Telegram aswinqabot"
         }
       }
+    },
+    {
+      "name": "Record draft score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2970,
+        -320
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://portfolio.aswin-qa.workers.dev/api/ai-evals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ kind: 'live', model: \"qwen3.5:2b\", promptVersion: $json.promptVersion, storyKey: $('Format message').first().json.key, score: $json.evalScore.score, summary: $json.evalScore.summary.slice(0, 500) }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<set-in-n8n>",
+          "name": "Portfolio AI evals"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -776,6 +804,17 @@
       ]
     },
     "Format test cases": {
+      "main": [
+        [
+          {
+            "node": "Record draft score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record draft score": {
       "main": [
         [
           {
