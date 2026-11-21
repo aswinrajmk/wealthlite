@@ -7,7 +7,7 @@ Usage (from the repo root):
 
 Needs JIRA_SITE, TELEGRAM_CHAT_ID and N8N_API_KEY in the environment. The credential and
 workflow ids below are references to objects in the local n8n, not secrets."""
-import json, os, sys, urllib.request
+import json, os, subprocess, sys, urllib.request
 
 SITE = "https://" + os.environ["JIRA_SITE"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -46,25 +46,24 @@ for (const item of $input.all()) {
 return out;
 """.replace("SITE_PLACEHOLDER", SITE)
 
-OLLAMA_BODY = r"""={{ JSON.stringify({
-  model: 'qwen3.5:2b',
-  stream: false,
-  think: false,
-  options: { temperature: 0.2 },
-  format: {
-    type: 'object',
-    properties: {
-      summary: { type: 'string' },
-      ambiguities: { type: 'array', items: { type: 'string' } },
-      risks: { type: 'array', items: { type: 'string' } }
-    },
-    required: ['summary', 'ambiguities', 'risks']
-  },
-  messages: [
-    { role: 'system', content: 'You are a senior QA analyst. Analyse the user story and its acceptance criteria. Reply only with JSON: a one-sentence summary, ambiguities (missing or unclear details), and risks.' },
-    { role: 'user', content: 'Story ' + $('Flatten stories').item.json.key + ': ' + $('Flatten stories').item.json.summary + '\n\n' + $('Flatten stories').item.json.description }
-  ]
-}) }}"""
+PROMPTS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prompts", "intake.json")))
+
+
+def ollama_body(step, user_expr):
+    """n8n expression for an Ollama chat request built from automation/prompts/intake.json, so the workflow and
+    the evals (automation/evals/run.ts) always use the same prompt, schema, model and options."""
+    p = PROMPTS[step]
+    return ("={{ JSON.stringify({ model: " + json.dumps(PROMPTS["model"]) + ", stream: false, think: false, "
+            "options: " + json.dumps(PROMPTS["options"]) + ", format: " + json.dumps(p["schema"]) + ", "
+            "messages: [{ role: 'system', content: " + json.dumps(p["system"]) + " }, "
+            "{ role: 'user', content: " + user_expr + " }] }) }}")
+
+
+OLLAMA_BODY = ollama_body(
+    "analysis",
+    "'Story ' + $('Flatten stories').item.json.key + ': ' + $('Flatten stories').item.json.summary + "
+    "'\\n\\n' + $('Flatten stories').item.json.description",
+)
 
 FORMAT = r"""
 // Parse Qwen's JSON and build the Telegram message for this story.
@@ -135,39 +134,26 @@ def approval_buttons(step):
 WAIT_24H = {"resume": "webhook", "httpMethod": "GET", "limitWaitTime": True, "limitType": "afterTimeInterval",
             "resumeAmount": 24, "resumeUnit": "hours", "options": {}}
 
-TESTS_BODY = r"""={{ JSON.stringify({
-  model: 'qwen3.5:2b',
-  stream: false,
-  think: false,
-  options: { temperature: 0.2 },
-  format: {
-    type: 'object',
-    properties: {
-      cases: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            title: { type: 'string' },
-            type: { type: 'string', enum: ['positive', 'negative', 'edge'] },
-            criterion: { type: 'string' },
-            preconditions: { type: 'string' },
-            steps: { type: 'array', items: { type: 'string' } },
-            expected: { type: 'string' }
-          },
-          required: ['title', 'type', 'criterion', 'preconditions', 'steps', 'expected']
-        }
-      }
-    },
-    required: ['cases']
-  },
-  messages: [
-    { role: 'system', content: 'You are a senior QA engineer. Write the MINIMAL set of manual test cases that gives core coverage of the story: exactly one positive case per acceptance criterion, plus at most two negative or edge cases that matter most. 3 to 6 cases in total. No duplicates. Each case: short title, type, the acceptance criterion it covers, preconditions, 2-5 concrete steps, one observable expected result. Use exact UI text from the story. Reply only with JSON.' },
-    { role: 'user', content: 'Story ' + $('Format message').first().json.key + ': ' + $('Format message').first().json.summary + '\n\n' + $('Format message').first().json.description + '\n\nApproved analysis:\n' + JSON.stringify($('Format message').first().json.analysis) }
-  ]
-}) }}"""
+TESTS_BODY = ollama_body(
+    "testCases",
+    "'Story ' + $('Format message').first().json.key + ': ' + $('Format message').first().json.summary + "
+    "'\\n\\n' + $('Format message').first().json.description + '\\n\\nApproved analysis:\\n' + "
+    "JSON.stringify($('Format message').first().json.analysis)",
+)
 
-FORMAT_TESTS = r"""
+def score_js():
+    """automation/evals/score.ts as plain JavaScript (Node strips the types), so the live score in Telegram and the
+    CI eval run the same code. Exports are removed because a Code node is a function body, not a module."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "evals", "score.ts")
+    js = subprocess.run(
+        ["node", "--input-type=module", "--no-warnings", "-e",
+         "import { stripTypeScriptTypes } from 'node:module'; import { readFileSync } from 'node:fs';"
+         "process.stdout.write(stripTypeScriptTypes(readFileSync(process.argv[1], 'utf8')))", src],
+        check=True, capture_output=True, text=True).stdout
+    return "\n".join(line[len("export "):] if line.startswith("export ") else line for line in js.splitlines())
+
+
+FORMAT_TESTS_BODY = r"""
 // Parse Qwen's test cases and build the approval message.
 const story = $('Format message').first().json;
 let cases = [];
@@ -181,12 +167,22 @@ const blocks = cases.map((c, i) => [
   ...(c.steps || []).map((s, j) => `   ${j + 1}) ${s}`),
   `   Expect: ${c.expected}`,
 ].join('\n'));
+// Eval: the same scorer the CI gate uses (automation/evals/score.ts), so the reviewer sees evidence, not just text.
+const evalScore = scoreTestCases({ key: story.key, summary: story.summary, description: story.description }, cases);
+const evalLines = [
+  `📊 ${evalScore.summary}`,
+  ...evalScore.criteria.missing.map((m) => `   ✗ Not covered: ${m}`),
+  ...evalScore.contradictions.map((c) => `   ✗ Case ${c.case}: ${c.reason}`),
+  ...evalScore.duplicates.map(([a, b]) => `   ✗ Cases ${a} and ${b} look like duplicates`),
+  ...evalScore.incomplete.map((c) => `   ✗ Case ${c.case}: ${c.reason}`),
+];
 const text = (cases.length
-  ? [`🧪 Test cases for ${story.key}: ${story.summary}`, '', ...blocks].join('\n\n')
+  ? [`🧪 Test cases for ${story.key}: ${story.summary}`, evalLines.join('\n'), ...blocks].join('\n\n')
   : `⚠️ Qwen returned no usable test cases for ${story.key}. Reject, then remove the ai-rejected label to retry.`
 ).slice(0, 3800);
-return [{ json: { cases, text } }];
+return [{ json: { cases, text, evalScore, promptVersion: PROMPT_VERSION } }];
 """
+FORMAT_TESTS = (score_js() + "\n" + FORMAT_TESTS_BODY).replace("PROMPT_VERSION", json.dumps(PROMPTS["version"]))
 
 PREPARE_TESTS = r"""
 // One Jira 'Test' issue per approved case, linked to the story with 'Tests' (story is tested by test).

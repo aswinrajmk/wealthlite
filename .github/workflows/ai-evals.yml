@@ -1,0 +1,82 @@
+name: AI evals
+
+# Regression gate for the AI that drafts test cases: when the intake prompt, the model or the scorer changes, run
+# the prompt on every golden story with the local model (Ollama, on the runner's CPU), score the drafts, and fail
+# if the average drops more than 5 points below automation/evals/baseline.json. The table lands in the run summary.
+on:
+  pull_request:
+    paths:
+      - automation/prompts/**
+      - automation/evals/**
+      - automation/n8n/build_intake.py
+      - .github/workflows/ai-evals.yml
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Ollama model to compare (empty = the model in automation/prompts/intake.json). Never gates.
+        required: false
+        default: ""
+
+concurrency:
+  group: ai-evals-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      OLLAMA_MODELS: ${{ github.workspace }}/.ollama-models
+      EVAL_MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Pick the model
+        id: model
+        run: |
+          model="${EVAL_MODEL:-$(node -p 'require("./automation/prompts/intake.json").model')}"
+          printf '%s' "$model" | grep -Eq '^[A-Za-z0-9._:/-]{1,60}$' || { echo "Invalid model name"; exit 1; }
+          echo "name=$model" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the model download
+        uses: actions/cache@v4
+        with:
+          path: .ollama-models
+          key: ollama-${{ steps.model.outputs.name }}
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          sudo systemctl stop ollama 2>/dev/null || true
+          mkdir -p "$OLLAMA_MODELS"
+          nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:11434/api/version >/dev/null && break; sleep 1; done
+          ollama pull "${{ steps.model.outputs.name }}"
+
+      - name: Run the golden set
+        env:
+          REPORT: ${{ runner.temp }}/ai-eval.md
+          NO_GATE: ${{ inputs.model != '' && '--no-gate' || '' }}
+        run: |
+          set -o pipefail
+          node automation/evals/run.ts $NO_GATE 2>&1 | tee "$RUNNER_TEMP/ai-eval.log"
+
+      - name: Publish the report
+        if: ${{ !cancelled() }}
+        run: |
+          [ -f "$RUNNER_TEMP/ai-eval.md" ] && cat "$RUNNER_TEMP/ai-eval.md" >> "$GITHUB_STEP_SUMMARY" || echo "No report was written." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: ai-eval-report
+          path: |
+            ${{ runner.temp }}/ai-eval.md
+            ${{ runner.temp }}/ai-eval.log
+          retention-days: 30
